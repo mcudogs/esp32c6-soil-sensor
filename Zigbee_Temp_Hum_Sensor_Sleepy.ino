@@ -85,14 +85,13 @@ static void meausureAndSleep(void *arg) {
   float voltage = (battrawvalue / 3218.0) * 2 * 3.3;
   float battery = map(voltage * 100, 350, 420, 0, 100);
   // Use temperature value as humidity value to demonstrate both temperature and humidity
-  zbTempSensor.setBatteryPercentage(battery);
+zbTempSensor.setBatteryPercentage((uint8_t)constrain((int)battery, 0, 100));
+zbTempSensor.setTemperature(temperature);
+zbTempSensor.setHumidity(humidity);
 
-  // Update temperature and humidity values in Temperature sensor EP
-  zbTempSensor.setTemperature(temperature);
-  zbTempSensor.setHumidity(humidity);
-  bool zbTempSensor.reportBatteryPercentage();
-  // Report temperature and humidity values
-  zbTempSensor.report();  // reports temperature and humidity values (if humidity sensor is not added, only temperature is reported)
+// Send battery and sensor reports
+zbTempSensor.reportBatteryPercentage();
+zbTempSensor.report();
   Serial.printf("Reported temperature: %.2f°C, Battery: %.2f%%, Humidity: %.2f%%, Raw Battery: %u, soil raw value: %u\r\n", temperature, battery, humidity, battrawvalue, soilrawvalue);
 
   unsigned long startTime = millis();
@@ -107,7 +106,8 @@ static void meausureAndSleep(void *arg) {
       Serial.println("Resending data on failure!");
       resend = false;
       dataToSend = 2;
-      zbTempSensor.report();  // report again
+      zbTempSensor.reportBatteryPercentage();
+      zbTempSensor.report();
     }
     if (millis() - startTime >= timeout) {
       Serial.println("\nReport timeout! Report Again");

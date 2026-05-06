@@ -45,10 +45,86 @@ uint8_t button = BOOT_PIN;
 
 ZigbeeTempSensor zbTempSensor = ZigbeeTempSensor(TEMP_SENSOR_ENDPOINT_NUMBER);
 
-uint8_t dataToSend = 2;  // Temperature and humidity values are reported in same endpoint, so 2 values are reported
+uint8_t dataToSend = 3;  // Temperature and humidity values are reported in same endpoint, so 2 values are reported
 bool resend = false;
 const int BatteryPin = A0; 
 const int SoilResistancePin = A1; 
+struct BatteryCalibrationPoint {
+  int raw;
+  float voltage;
+};
+
+// Raw ADC readings measured against DMM voltage.
+// Table must be ordered from lowest raw/voltage to highest raw/voltage.
+const BatteryCalibrationPoint BATTERY_CAL[] = {
+  {331, 3.40f},
+  {402, 3.60f},
+  {420, 3.70f},
+  {460, 4.00f},
+  {507, 4.20f}
+};
+
+const int BATTERY_CAL_COUNT = sizeof(BATTERY_CAL) / sizeof(BATTERY_CAL[0]);
+
+float batteryVoltageFromRaw(int raw) {
+  // Clamp below lowest calibration point
+  if (raw <= BATTERY_CAL[0].raw) {
+    return BATTERY_CAL[0].voltage;
+  }
+
+  // Clamp above highest calibration point
+  if (raw >= BATTERY_CAL[BATTERY_CAL_COUNT - 1].raw) {
+    return BATTERY_CAL[BATTERY_CAL_COUNT - 1].voltage;
+  }
+
+  // Interpolate between the two calibration points surrounding raw
+  for (int i = 0; i < BATTERY_CAL_COUNT - 1; i++) {
+    int rawLow = BATTERY_CAL[i].raw;
+    int rawHigh = BATTERY_CAL[i + 1].raw;
+
+    if (raw >= rawLow && raw <= rawHigh) {
+      float voltageLow = BATTERY_CAL[i].voltage;
+      float voltageHigh = BATTERY_CAL[i + 1].voltage;
+
+      float fraction = (float)(raw - rawLow) / (float)(rawHigh - rawLow);
+      return voltageLow + fraction * (voltageHigh - voltageLow);
+    }
+  }
+
+  // Should never get here, but return lowest voltage as a safe fallback
+  return BATTERY_CAL[0].voltage;
+}
+
+uint8_t liIonPercentFromVoltage(float voltage) {
+  // Clamp full and empty limits
+  if (voltage >= 4.20f) return 100;
+  if (voltage <= 3.40f) return 0;
+
+  // Piecewise approximation for a single-cell Li-ion/LiPo battery.
+  // This is intentionally conservative near the bottom.
+  if (voltage >= 4.00f) {
+    return 80 + (uint8_t)roundf((voltage - 4.00f) * (20.0f / 0.20f));
+  }
+
+  if (voltage >= 3.85f) {
+    return 60 + (uint8_t)roundf((voltage - 3.85f) * (20.0f / 0.15f));
+  }
+
+  if (voltage >= 3.75f) {
+    return 40 + (uint8_t)roundf((voltage - 3.75f) * (20.0f / 0.10f));
+  }
+
+  if (voltage >= 3.65f) {
+    return 20 + (uint8_t)roundf((voltage - 3.65f) * (20.0f / 0.10f));
+  }
+
+  if (voltage >= 3.50f) {
+    return 10 + (uint8_t)roundf((voltage - 3.50f) * (10.0f / 0.15f));
+  }
+
+  // 3.40V to 3.50V = 0% to 10%
+  return (uint8_t)roundf((voltage - 3.40f) * (10.0f / 0.10f));
+}
 
 /************************ Callbacks *****************************/
 #if USE_GLOBAL_ON_RESPONSE_CALLBACK
@@ -75,17 +151,32 @@ void onResponse(zb_cmd_type_t command, esp_zb_zcl_status_t status) {
 }
 #endif
 
+int readBatteryRawAveraged(int pin) {
+  const int samples = 20;
+  long total = 0;
+
+  for (int i = 0; i < samples; i++) {
+    total += analogRead(pin);
+    delay(2);
+  }
+
+  return total / samples;
+}
+
 /************************ Temp sensor *****************************/
 static void meausureAndSleep(void *arg) {
   // Measure temperature sensor value
   float temperature = temperatureRead();
   int soilrawvalue = analogRead(SoilResistancePin);
   float humidity = map(soilrawvalue, 2646, 920, 0, 100);
-  int battrawvalue = analogRead(BatteryPin);
-  float voltage = (battrawvalue / 3218.0) * 2 * 3.3;
-  float battery = map(voltage * 100, 350, 420, 0, 100);
+  int battrawvalue = readBatteryRawAveraged(BatteryPin);
+  //int battrawvalue = analogRead(BatteryPin);
+  float voltage = batteryVoltageFromRaw(battrawvalue);
+  uint8_t battery = liIonPercentFromVoltage(voltage);
+  //float voltage = (battrawvalue / 3218.0) * 2 * 3.3;
+  //float battery = map(voltage * 100, 350, 420, 0, 100);
   // Use temperature value as humidity value to demonstrate both temperature and humidity
-zbTempSensor.setBatteryPercentage((uint8_t)constrain((int)battery, 0, 100));
+zbTempSensor.setBatteryPercentage(battery);
 zbTempSensor.setTemperature(temperature);
 zbTempSensor.setHumidity(humidity);
 
@@ -105,13 +196,13 @@ zbTempSensor.report();
     if (resend) {
       Serial.println("Resending data on failure!");
       resend = false;
-      dataToSend = 2;
+      dataToSend = 3;
       zbTempSensor.reportBatteryPercentage();
       zbTempSensor.report();
     }
     if (millis() - startTime >= timeout) {
       Serial.println("\nReport timeout! Report Again");
-      dataToSend = 2;
+      dataToSend = 3;
       zbTempSensor.report();  // report again
       startTime = millis();
       tries++;
@@ -207,7 +298,7 @@ void loop() {
         Serial.println("Resetting Zigbee to factory and rebooting in 1s.");
         delay(1000);
         // Optional set reset in factoryReset to false, to not restart device after erasing nvram, but set it to endless sleep manually instead
-        Zigbee.factoryReset(false);
+        Zigbee.factoryReset();
         Serial.println("Going to endless sleep, press RESET button or power off/on the device to wake up");
         esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
         esp_deep_sleep_start();

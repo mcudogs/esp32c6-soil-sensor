@@ -176,14 +176,23 @@ static void meausureAndSleep(void *arg) {
   //float voltage = (battrawvalue / 3218.0) * 2 * 3.3;
   //float battery = map(voltage * 100, 350, 420, 0, 100);
   // Use temperature value as humidity value to demonstrate both temperature and humidity
-zbTempSensor.setBatteryPercentage(battery);
-zbTempSensor.setTemperature(temperature);
-zbTempSensor.setHumidity(humidity);
+  zbTempSensor.setBatteryPercentage(battery);
+  zbTempSensor.setTemperature(temperature);
+  zbTempSensor.setHumidity(humidity);
 
-// Send battery and sensor reports
-zbTempSensor.reportBatteryPercentage();
-zbTempSensor.report();
-  Serial.printf("Reported temperature: %.2f°C, Battery: %.2f%%, Humidity: %.2f%%, Raw Battery: %u, soil raw value: %u\r\n", temperature, battery, humidity, battrawvalue, soilrawvalue);
+  // Send battery and sensor reports
+  zbTempSensor.reportBatteryPercentage();
+  zbTempSensor.report();
+  Serial.printf(
+  "Reported temperature: %.2f°C, Battery: %u%%, Voltage: %.3fV, Humidity: %.2f%%, Raw Battery: %d, soil raw value: %d\r\n",
+  temperature,
+  battery,
+  voltage,
+  humidity,
+  battrawvalue,
+  soilrawvalue
+  );
+  //Serial.printf("Reported temperature: %.2f°C, Battery: %.2f%%, Humidity: %.2f%%, Raw Battery: %u, soil raw value: %u\r\n", temperature, battery, humidity, battrawvalue, soilrawvalue);
 
   unsigned long startTime = millis();
   const unsigned long timeout = REPORT_TIMEOUT;
@@ -201,12 +210,16 @@ zbTempSensor.report();
       zbTempSensor.report();
     }
     if (millis() - startTime >= timeout) {
-      Serial.println("\nReport timeout! Report Again");
+     Serial.println("\nReport timeout! Report Again");
       dataToSend = 3;
-      zbTempSensor.report();  // report again
+
+      zbTempSensor.reportBatteryPercentage();
+      zbTempSensor.report();
+
       startTime = millis();
       tries++;
     }
+    
     Serial.printf(".");
     delay(50);  // 50ms delay to avoid busy-waiting
   }
@@ -266,24 +279,34 @@ void setup() {
   // For battery powered devices, it can be better to set timeout for Zigbee Begin to lower value to save battery
   // If the timeout has been reached, the network channel mask will be reset and the device will try to connect again after reset (scanning all channels)
   //Zigbee.setTimeout(10000);  // Set timeout for Zigbee Begin to 10s (default is 30s)
-  delay(5000);
+    delay(5000);
+
   // When all EPs are registered, start Zigbee in End Device mode
   if (!Zigbee.begin(&zigbeeConfig, false)) {
     Serial.println("Zigbee failed to start!");
     Serial.println("Rebooting...");
-    ESP.restart();  // If Zigbee failed to start, reboot the device and try again
+    ESP.restart();
   }
+
   Serial.println("Connecting to network");
   while (!Zigbee.connected()) {
     Serial.print(".");
     delay(100);
   }
+
   Serial.println();
   Serial.println("Successfully connected to Zigbee network");
 
-  // Start Temperature sensor reading task
-  xTaskCreate(meausureAndSleep, "temp_sensor_update", 2048, NULL, 10, NULL);
+  // Keep this sleepy end device awake long enough for Zigbee2MQTT to
+  // complete the interview. Without this, Z2M may fail while requesting
+  // the node descriptor.
+  //Serial.println("Keeping device awake for Zigbee2MQTT interview...");
+  //delay(60000);
+
+  // Start sensor reading task after the interview window.
+  xTaskCreate(meausureAndSleep, "temp_sensor_update", 4096, NULL, 10, NULL);
 }
+
 
 void loop() {
   // Checking button for factory reset

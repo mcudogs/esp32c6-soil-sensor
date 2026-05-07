@@ -57,11 +57,11 @@ struct BatteryCalibrationPoint {
 // Raw ADC readings measured against DMM voltage.
 // Table must be ordered from lowest raw/voltage to highest raw/voltage.
 const BatteryCalibrationPoint BATTERY_CAL[] = {
-  {331, 3.40f},
-  {402, 3.60f},
-  {420, 3.70f},
-  {460, 4.00f},
-  {507, 4.20f}
+  {1324, 3.40f},
+  {1608, 3.60f},
+  {1680, 3.70f},
+  {1840, 4.00f},
+  {2028, 4.20f}
 };
 
 const int BATTERY_CAL_COUNT = sizeof(BATTERY_CAL) / sizeof(BATTERY_CAL[0]);
